@@ -1,0 +1,307 @@
+# BDA400 - Data Science Tools and Techniques
+# Assignment 2: Technical Analysis using R
+# Student Name: Amandeep Kaur
+# Student ID: 664432117
+# File Name: technical_analysis.R
+
+
+# STEP 1: INSTALL AND LOAD REQUIRED PACKAGES
+
+required_packages <- c("quantmod", "TTR", "xts", "zoo")
+
+for (pkg in required_packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+
+library(quantmod)
+library(TTR)
+library(xts)
+library(zoo)
+
+
+# STEP 2: FUNCTION TO LOAD STOCK DATA
+
+load_stock_data <- function(file_path = "portfolio.txt",
+                            from_date = "2023-01-01",
+                            to_date = Sys.Date()) {
+
+  if (!file.exists(file_path)) {
+    stop("Error: portfolio.txt file not found.")
+  }
+
+  symbols <- readLines(file_path, warn = FALSE)
+  symbols <- trimws(symbols)
+  symbols <- symbols[nzchar(symbols)]
+
+  if (length(symbols) == 0) {
+    stop("No stock symbols found in portfolio.txt.")
+  }
+
+  portfolio_data <- list()
+
+  cat("Loading stock data...\n")
+
+  for (symbol in symbols) {
+
+    tryCatch({
+
+      stock_data <- getSymbols(
+        symbol,
+        src = "yahoo",
+        from = from_date,
+        to = to_date,
+        auto.assign = FALSE
+      )
+
+      stock_df <- data.frame(
+        Date = as.Date(xts::index(stock_data)),
+        coredata(stock_data)
+      )
+
+      colnames(stock_df) <- c(
+        "Date", "Open", "High", "Low",
+        "Close", "Volume", "Adjusted"
+      )
+
+      portfolio_data[[symbol]] <- stock_df
+
+      cat("Successfully loaded:", symbol,
+          "-", nrow(stock_df), "records\n")
+
+    }, error = function(e) {
+
+      cat("Unable to load", symbol, ":",
+          conditionMessage(e), "\n")
+
+    })
+  }
+
+  if (length(portfolio_data) == 0) {
+    stop("No stock data could be downloaded.")
+  }
+
+  return(portfolio_data)
+}
+
+
+# STEP 3: FUNCTION TO CALCULATE MODE
+
+get_mode <- function(x) {
+
+  x <- x[!is.na(x)]
+
+  if (length(x) == 0) {
+    return(NA_real_)
+  }
+
+  rounded_values <- round(x, 2)
+
+  frequencies <- table(rounded_values)
+
+  as.numeric(names(frequencies)[which.max(frequencies)])
+}
+
+
+# STEP 4: FUNCTION TO CALCULATE STOCK STATISTICS
+
+calculate_statistics <- function(stock_df, ma_window = 20) {
+
+  close_prices <- stock_df$Close
+
+  close_prices <- close_prices[!is.na(close_prices)]
+
+  if (length(close_prices) == 0) {
+    stop("No valid closing prices available.")
+  }
+
+  if (ma_window < 1 || ma_window != as.integer(ma_window)) {
+    stop("Moving average window must be a positive integer.")
+  }
+
+  # Calculate mean
+  mean_value <- mean(close_prices)
+
+  # Calculate median
+  median_value <- median(close_prices)
+
+  # Calculate mode
+  mode_value <- get_mode(close_prices)
+
+  # Calculate standard deviation
+  sd_value <- if (length(close_prices) > 1) {
+    sd(close_prices)
+  } else {
+    NA_real_
+  }
+
+  # Calculate Simple Moving Average
+  stock_df$SMA_20 <- as.numeric(
+    TTR::SMA(stock_df$Close, n = ma_window)
+  )
+
+  # Latest closing price
+  latest_close <- tail(close_prices, 1)
+
+  # Latest moving average
+  latest_sma <- tail(
+    stock_df$SMA_20[!is.na(stock_df$SMA_20)], 1
+  )
+
+  if (length(latest_sma) == 0) {
+    latest_sma <- NA_real_
+  }
+
+  # Create statistics table
+  stats_table <- data.frame(
+    Metric = c(
+      "Mean Close",
+      "Median Close",
+      "Mode Close",
+      "Standard Deviation",
+      "Latest Close",
+      paste0(ma_window, "-Day SMA (Latest)")
+    ),
+
+    Value = round(c(
+      mean_value,
+      median_value,
+      mode_value,
+      sd_value,
+      latest_close,
+      latest_sma
+    ), 2)
+  )
+
+  return(list(
+    data_with_ma = stock_df,
+    stats_table = stats_table
+  ))
+}
+
+
+# STEP 5: FUNCTION TO DISPLAY STOCK DATA AND STATISTICS
+
+display_stock_output <- function(symbol, processed_output) {
+
+  cat("\n====================================\n")
+  cat(" STOCK SUMMARY:", symbol, "\n")
+  cat("====================================\n")
+
+  # Display statistics
+  print(processed_output$stats_table,
+        row.names = FALSE)
+
+  # Display latest five records
+  cat("\nLatest Five Trading Days:\n")
+
+  print(
+    tail(
+      processed_output$data_with_ma[
+        , c("Date", "Close", "Volume", "SMA_20")
+      ],
+      5
+    ),
+    row.names = FALSE
+  )
+
+}
+
+
+# STEP 6: FUNCTION TO CREATE STOCK PRICE GRAPH
+
+plot_stock_data <- function(symbol, processed_output) {
+
+  stock_df <- processed_output$data_with_ma
+
+  plot(
+    stock_df$Date,
+    stock_df$Close,
+    type = "l",
+    col = "blue",
+    lwd = 2,
+    main = paste(symbol, "Stock Price and Moving Average"),
+    xlab = "Date",
+    ylab = "Stock Price (USD)"
+  )
+
+  lines(
+    stock_df$Date,
+    stock_df$SMA_20,
+    col = "red",
+    lwd = 2,
+    lty = 2
+  )
+
+  legend(
+    "topleft",
+    legend = c("Closing Price", "20-Day SMA"),
+    col = c("blue", "red"),
+    lty = c(1, 2),
+    lwd = 2
+  )
+}
+
+
+# STEP 7: EXECUTE THE ANALYSIS
+
+# Load stock data from portfolio.txt
+
+portfolio_data <- load_stock_data("portfolio.txt")
+
+
+# Calculate statistics for every stock
+
+results <- lapply(
+  portfolio_data,
+  calculate_statistics
+)
+
+
+# Display stock data and statistics
+
+for (symbol in names(results)) {
+
+  display_stock_output(
+    symbol,
+    results[[symbol]]
+  )
+
+}
+
+
+# Create graphs for every stock
+
+for (symbol in names(results)) {
+
+  plot_stock_data(
+    symbol,
+    results[[symbol]]
+  )
+
+}
+
+
+# STEP 8: SAVE STATISTICAL RESULTS
+
+all_statistics <- do.call(
+  rbind,
+  lapply(names(results), function(symbol) {
+
+    data.frame(
+      Stock = symbol,
+      results[[symbol]]$stats_table
+    )
+
+  })
+)
+
+write.csv(
+  all_statistics,
+  "stock_statistics.csv",
+  row.names = FALSE
+)
+
+cat("\nAnalysis completed successfully!\n")
+cat("Statistical results saved in stock_statistics.csv\n")
